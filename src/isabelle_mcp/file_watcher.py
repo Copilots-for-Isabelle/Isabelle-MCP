@@ -26,7 +26,7 @@ def _inotify_instances_available() -> int:
     """Estimate how many inotify instances are still available for this user.
 
     LINUX ONLY -- it reads /proc.  Elsewhere every path returns 0, which the caller
-    must not read as "exhausted"; see the platform guard in Watcher.start.
+    must not read as "exhausted"; see the platform guards in start and add_watch.
     """
     try:
         with open("/proc/sys/fs/inotify/max_user_instances") as f:
@@ -146,10 +146,7 @@ class FileWatcher:
         self._handler = _Handler()
         self._observer.start()
         self._inotify_enabled = True
-        logger.info(
-            "Filesystem watcher started (%d inotify instances available, dir limit=%d)",
-            avail, min(MAX_WATCHED_DIRS, avail - 10),
-        )
+        logger.info("Filesystem watcher started (dir limit=%d)", MAX_WATCHED_DIRS)
 
     def stop(self) -> None:
         if self._observer is not None and self._inotify_enabled:
@@ -173,11 +170,12 @@ class FileWatcher:
             logger.warning("Global dir watch limit reached (%d), skipping %s",
                            MAX_WATCHED_DIRS, directory)
             return False
-        avail = _inotify_instances_available()
-        if avail < 10:
-            logger.warning("inotify headroom low (%d), skipping watch for %s",
-                           avail, directory)
-            return False
+        if sys.platform.startswith("linux"):  # LINUX-ONLY, as in start()
+            avail = _inotify_instances_available()
+            if avail < 10:
+                logger.warning("inotify headroom low (%d), skipping watch for %s",
+                               avail, directory)
+                return False
         try:
             watch = self._observer.schedule(self._handler, directory, recursive=False)
         except OSError as e:

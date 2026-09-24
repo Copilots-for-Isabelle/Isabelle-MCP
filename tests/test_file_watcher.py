@@ -115,6 +115,58 @@ class TestWatchSet:
         assert fw._observer.unscheduled == []
 
 
+# ── Unit: the inotify headroom check is Linux-only ─────────────────────
+
+@pytest.fixture
+def _no_inotify(monkeypatch):
+    """What _inotify_instances_available returns where /proc/sys/fs/inotify is absent."""
+    monkeypatch.setattr(fw_mod, "_inotify_instances_available", lambda: 0)
+
+
+class TestPlatforms:
+    @pytest.mark.parametrize("platform", ["darwin", "win32"])
+    def test_start_and_watch_ignore_inotify_off_linux(self, monkeypatch, _no_inotify, platform):
+        monkeypatch.setattr(fw_mod.sys, "platform", platform)
+        fw = FileWatcher()
+        fw.start()
+        real = fw._observer
+        try:
+            assert fw._inotify_enabled
+            fw._observer = _FakeObserver()
+            assert fw.add_watch("/tmp/d") is True
+        finally:
+            fw._observer = real
+            fw.stop()
+
+    def test_start_and_watch_on_linux(self, monkeypatch, _plenty_of_inotify):
+        monkeypatch.setattr(fw_mod.sys, "platform", "linux")
+        fw = FileWatcher()
+        fw.start()
+        real = fw._observer
+        try:
+            assert fw._inotify_enabled
+            fw._observer = _FakeObserver()
+            assert fw.add_watch("/tmp/d") is True
+        finally:
+            fw._observer = real
+            fw.stop()
+
+    def test_start_disabled_without_inotify_headroom_on_linux(self, monkeypatch):
+        monkeypatch.setattr(fw_mod.sys, "platform", "linux")
+        monkeypatch.setattr(fw_mod, "_inotify_instances_available", lambda: 3)
+        fw = FileWatcher()
+        fw.start()
+        assert not fw._inotify_enabled
+
+    def test_add_watch_skipped_without_inotify_headroom_on_linux(self, monkeypatch):
+        monkeypatch.setattr(fw_mod.sys, "platform", "linux")
+        monkeypatch.setattr(fw_mod, "_inotify_instances_available", lambda: 3)
+        fw = FileWatcher()
+        fw._inotify_enabled = True
+        fw._observer = _FakeObserver()
+        assert fw.add_watch("/tmp/d") is False
+
+
 # ── Integration: real inotify, atomic-rename regression ────────────────
 
 def _start_real_watcher(loop, sink):
